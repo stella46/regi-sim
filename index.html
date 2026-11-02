@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>レジ当番</title>
+<style>
+/* Layout: PC=1000x660、スマホ=380x700 の固定ステージを等倍率で拡縮。どちらも中のUIは常に固定サイズ。
+   PC: 左=行列、中央=レジ、右=棚。スマホ: 上=行列、中央=レジ/棚(タブ切替)、下=タブ。単一テーマ(昼のカウンター)。 */
+:root{
+  --page:#d2dae0; --bg:#e4e9ed; --panel:#f5f7f9; --panel2:#ffffff; --ink:#17232b; --muted:#566772; --line:#c8d2d9;
+  --lcd:#12302a; --lcd-ink:#aaf2cb; --lcd-dim:#5b9a82; --lcd-warn:#ffd36b;
+  --accent:#0b7a6b; --accent-ink:#ffffff; --accent-soft:#d3ece7;
+  --amber:#e3a000; --bad:#c4381b; --bad-soft:#f8dcd4; --good:#277f40; --key-edge:#b4c0c8;
+  --f-body:'Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic UI','Yu Gothic','Meiryo',system-ui,sans-serif;
+  --f-mono:ui-monospace,'SF Mono','Cascadia Mono',Consolas,Menlo,monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{background:var(--page)}
+body{color:var(--ink);font:500 14px/1.4 var(--f-body);overflow-x:hidden}
+.wrap{padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#holder{margin:0 auto;position:relative}
+#stage{position:absolute;left:0;top:0;width:1000px;height:660px;transform-origin:0 0;background:var(--bg);border-radius:12px;overflow:hidden;box-shadow:0 8px 24px -10px rgba(23,35,43,.45);user-select:none;-webkit-user-select:none}
+#stage.m{width:380px;height:700px}
+h1,h2,h3,h4,p{margin:0}
+h2{font-size:15px;font-weight:900;letter-spacing:.04em;height:24px;display:flex;align-items:baseline;gap:8px;white-space:nowrap}
+h2 small{font-weight:500;color:var(--muted);font-size:12px}
+h3{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.05em;height:16px;white-space:nowrap}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.sub{color:var(--muted);font-size:12px}
+.sp{flex:1}
+button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
+button:focus-visible{outline:3px solid var(--amber);outline-offset:1px}
+kbd{font:500 10px/1 var(--f-mono);border:1px solid var(--key-edge);border-radius:3px;padding:2px 4px;background:#eef2f4;color:var(--muted)}
+.key{height:36px;padding:0 10px;border:1px solid var(--key-edge);border-bottom-width:3px;border-radius:7px;background:var(--panel2);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:6px;white-space:nowrap;line-height:1}
+.key:hover:not(:disabled){background:#eef6f4}
+.key:active:not(:disabled){transform:translateY(2px);border-bottom-width:1px}
+.key:disabled{opacity:.4;cursor:not-allowed}
+.key.primary{background:var(--accent);color:var(--accent-ink);border-color:#065a4e}
+.key.primary:hover:not(:disabled){background:#0a6b5d}
+.key.warn{background:var(--bad-soft);border-color:#e0a898}
+.key.on{background:var(--accent-soft);border-color:var(--accent)}
+.key.c{justify-content:center}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;overflow:hidden}
+#modal{position:absolute;inset:0;z-index:5;pointer-events:none}
+.tabbar{display:none}
+
+/* ---- game (PC) ---- */
+.scr{position:absolute;inset:0;padding:12px}
+.game{display:grid;grid-template-rows:44px 36px 540px;gap:8px}
+.topbar{display:flex;gap:8px;align-items:center;height:44px}
+.stat{height:40px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.stat span{font-size:12px;color:var(--muted)}
+.stat b{font-size:17px}
+.w120{width:120px}.w170{width:170px}.w110{width:110px}
+.rush{width:92px;text-align:center;background:var(--amber);color:#2b2000;font-weight:900;font-size:12px;padding:5px 0;border-radius:5px;letter-spacing:.08em}
+.tb{width:130px;height:36px}
+.msg{height:36px;display:flex;align-items:center;background:var(--panel2);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:7px;padding:0 12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msg[data-k="bad"]{border-left-color:var(--bad);background:var(--bad-soft)}
+.msg[data-k="good"]{border-left-color:var(--good)}
+.main{display:grid;grid-template-columns:148px 520px 288px;gap:10px;height:540px}
+.main>.panel{height:540px}
+.qlist{display:grid;gap:6px;margin-top:2px}
+.qs{height:70px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:6px;display:grid;grid-template-columns:36px minmax(0,1fr);gap:6px;align-items:center}
+.qs.empty{display:flex;justify-content:center;border-style:dashed;color:#9aa8b1;font-size:12px;background:transparent}
+.qi{display:grid;gap:5px;font-size:11px;min-width:0}
+.qi span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pat{height:7px;border-radius:4px;background:#dbe3e8;overflow:hidden}
+.pat .fill{display:block;height:100%;width:0;background:var(--good);border-radius:4px}
+[data-lv="mid"] .pat .fill{background:var(--amber)}
+[data-lv="lo"] .pat .fill{background:var(--bad)}
+.face .m-mid,.face .m-lo{display:none}
+[data-lv="mid"] .face .m-hi{display:none}
+[data-lv="mid"] .face .m-mid{display:inline}
+[data-lv="lo"] .face .m-hi{display:none}
+[data-lv="lo"] .face .m-lo{display:inline}
+.legend{margin-top:8px;display:grid;gap:3px;font-size:11px;color:var(--muted)}
+.legend div{display:flex;gap:6px;align-items:center;white-space:nowrap}
+.reg{display:grid;grid-template-rows:70px 116px 96px 30px 166px;gap:8px;align-content:start}
+.cr{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;height:70px}
+.facebox{width:64px;height:64px;display:grid;place-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:10px}
+.noface{font-size:12px;color:var(--muted);font-weight:700}
+.bw{display:grid;grid-template-rows:38px 16px 7px;gap:3px;align-content:start;min-width:0;height:64px}
+.bub1{font-weight:700;font-size:13px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.bub2{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lcd{background:var(--lcd);color:var(--lcd-ink);border-radius:8px;border:3px solid #0a1f1b;padding:6px 14px;display:grid;grid-template-rows:18px 18px 28px 18px 18px;font-family:var(--f-mono);font-variant-numeric:tabular-nums;height:116px;overflow:hidden}
+.lcd>div{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.lcd span{color:var(--lcd-dim);font:500 11px var(--f-body)}
+.lcd b{font-weight:700;font-size:13px}
+.lcd .due b{font-size:22px}
+.lcd .warn b{color:var(--lcd-warn)}
+.lcd .chg b{font-size:15px;color:#fff}
+.items{display:grid;grid-template-columns:250px minmax(0,1fr);gap:8px;height:96px}
+.basket{display:grid;grid-template-columns:repeat(3,78px);grid-template-rows:repeat(2,36px);gap:6px}
+.slot{width:78px;height:36px;padding:0 4px;justify-content:center;font-size:12px}
+.slot.empty{border:1px dashed #c0cbd2;border-radius:7px;background:transparent}
+.rcp{height:80px;background:#fdfdfb;border:1px dashed #b9c2c8;border-radius:5px;padding:4px 8px;overflow:hidden;font:500 12px/13px var(--f-mono)}
+.rcp div{display:flex;justify-content:space-between;gap:6px}
+.jobbar{height:30px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:3px 10px;display:grid;grid-template-rows:14px 7px;gap:2px;font-size:12px;font-weight:700}
+.jobbar .pat .fill{background:var(--amber)}
+.keys{display:grid;grid-template-columns:174px minmax(0,1fr);gap:8px;height:166px}
+.tenkey{display:grid;grid-template-columns:repeat(3,54px);grid-template-rows:repeat(4,36px);gap:6px}
+.fkeys{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(4,36px);gap:6px}
+.tk{justify-content:center;font:700 17px var(--f-mono)}
+.shelf{display:grid;grid-template-columns:repeat(3,84px);gap:6px;margin-top:2px}
+.sh{flex-direction:column;align-items:stretch;justify-content:center;height:58px;gap:6px;padding:6px 8px}
+.sh .t{display:flex;justify-content:space-between;gap:4px;font-size:12px}
+.sh .t b{font:700 12px var(--f-mono)}
+.sh .pat{height:5px}
+.sh.low .pat .fill{background:var(--bad)}
+.sh.low .t b{color:var(--bad)}
+.bagk{width:100%;margin-top:10px;height:40px}
+.note2{margin-top:10px;font-size:12px;color:var(--muted);line-height:1.5}
+.badge{background:var(--bad);color:#fff;border-radius:9px;font:700 11px var(--f-mono);padding:2px 6px;margin-left:6px}
+
+/* ---- title ---- */
+.title{display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:24px;padding:34px}
+.tl{display:grid;grid-template-rows:76px 40px 150px 188px 48px;gap:12px;align-content:start}
+.logo{font-size:60px;font-weight:900;letter-spacing:.08em;line-height:76px;color:var(--ink)}
+.tag{font-size:13px;color:var(--muted);line-height:20px}
+.menu{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(3,56px);gap:10px}
+.menu .key{height:100%;font-size:16px;justify-content:center}
+.menu .start{grid-column:1/-1}
+.chips{display:flex;gap:8px}
+.chip{flex:1;height:48px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:0 12px;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.chip span{font-size:12px;color:var(--muted)}.chip b{font-size:15px}
+.news{height:592px;display:grid;grid-template-rows:24px minmax(0,1fr);gap:8px}
+.newslist{overflow:auto;display:grid;gap:14px;align-content:start;padding-right:4px}
+.nv h4{font-size:14px;display:flex;gap:10px;align-items:baseline}
+.nv h4 small{font-weight:500;color:var(--muted);font-size:12px}
+.nv ul{margin:6px 0 0;padding-left:1.2em;display:grid;gap:4px;font-size:13px}
+
+/* ---- modal ---- */
+.modal{position:absolute;inset:0;background:rgba(14,24,30,.55);display:grid;place-items:center;pointer-events:auto}
+.mbox{width:700px;height:460px;background:var(--panel);border-radius:12px;padding:18px 20px;display:grid;grid-template-rows:28px minmax(0,1fr) 44px;gap:10px;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+.mt{font-size:20px;font-weight:900;letter-spacing:.06em}
+.mbody{overflow:auto;padding-right:4px}
+.mfoot{display:flex;gap:10px;align-items:center}
+.mfoot .key{height:40px;min-width:150px;justify-content:center}
+.set{display:grid;grid-template-columns:150px minmax(0,1fr) 56px;gap:12px;align-items:center;height:50px;border-bottom:1px solid var(--line)}
+.set input{width:100%;accent-color:var(--accent)}
+.set output{font:700 14px var(--f-mono);text-align:right}
+.seg{grid-column:2/4;display:flex;gap:6px}
+.seg .key{flex:1;justify-content:center;height:34px;font-size:12px}
+.set .key.wide{grid-column:2/4;height:34px;justify-content:center;font-size:12px}
+.howto{margin:0;padding-left:1.3em;display:grid;gap:8px;font-size:14px}
+.upg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,196px);gap:10px;margin-top:8px}
+.up{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;display:grid;grid-template-rows:20px 54px 16px 36px;gap:8px;align-content:start;font-size:12px}
+.up b{font-size:14px}
+.up p{color:var(--muted);line-height:1.45;overflow:hidden}
+.res{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;height:100%}
+.rankbox{background:var(--panel2);border:1px solid var(--line);border-radius:10px;display:grid;place-items:center;align-content:center;gap:6px}
+.rank{font-size:84px;font-weight:900;line-height:1;color:var(--accent)}
+table.rt{border-collapse:collapse;width:100%;align-self:start}
+table.rt td{padding:9px 4px;border-bottom:1px solid var(--line)}
+table.rt td:last-child{text-align:right;font-weight:700}
+.cred{display:grid;gap:14px;font-size:13px;line-height:1.55}
+.cred h4{font-size:14px;margin-bottom:4px;color:var(--accent)}
+.cred ul{margin:0;padding-left:1.2em;display:grid;gap:4px}
+
+/* ================= スマホ用レイアウト(380x700) ================= */
+#stage.m .scr{padding:8px}
+#stage.m .game{grid-template-rows:40px 34px 552px 40px;gap:6px}
+#stage.m .topbar{height:40px;gap:5px}
+#stage.m .stat{height:36px;padding:0 6px;gap:3px}
+#stage.m .stat span{font-size:10px}
+#stage.m .stat b{font-size:13px}
+#stage.m .w120{width:76px}#stage.m .w170{width:96px}#stage.m .w110{width:54px}
+#stage.m .topbar .rush,#stage.m .topbar .sp{display:none}
+#stage.m .tb{width:58px;height:36px;padding:0;justify-content:center;font-size:11px;margin-left:auto}
+#stage.m .tb kbd{display:none}
+#stage.m .msg{height:34px;white-space:normal;font-size:11px;line-height:1.25;padding:0 8px;overflow:hidden}
+#stage.m .main{grid-template-columns:minmax(0,1fr);grid-template-rows:56px 490px;gap:6px;height:552px}
+#stage.m .main>.panel{height:auto}
+#stage.m .main>.panel:nth-child(2),#stage.m .main>.panel:nth-child(3){grid-area:2/1}
+#stage.m:not(.tab-shelf) .main>.panel:nth-child(3){display:none}
+#stage.m.tab-shelf .main>.panel:nth-child(2){display:none}
+#stage.m .main>.panel:first-child{padding:6px}
+#stage.m .main>.panel:first-child h2,#stage.m .legend{display:none}
+#stage.m .qlist{grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:0}
+#stage.m .qs{height:42px;padding:3px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+#stage.m .qs svg{width:26px;height:26px}
+#stage.m .qi{width:100%;display:block}
+#stage.m .qi span{display:none}
+#stage.m .qs.empty{font-size:10px}
+#stage.m .reg{padding:8px;grid-template-rows:58px 100px 78px 28px 178px;gap:6px}
+#stage.m .cr{grid-template-columns:54px minmax(0,1fr);gap:8px;height:58px}
+#stage.m .facebox{width:54px;height:54px}
+#stage.m .facebox svg{width:46px;height:46px}
+#stage.m .bw{grid-template-rows:32px 14px 7px;height:56px;gap:2px}
+#stage.m .bub1{font-size:12px;line-height:16px}
+#stage.m .bub2{font-size:11px}
+#stage.m .lcd{height:100px;padding:4px 10px;grid-template-rows:15px 15px 26px 15px 15px}
+#stage.m .lcd b{font-size:11px}
+#stage.m .lcd .due b{font-size:19px}
+#stage.m .lcd .chg b{font-size:12px}
+#stage.m .lcd span{font-size:10px}
+#stage.m .items{grid-template-columns:minmax(0,1fr);height:78px}
+#stage.m .items>div:nth-child(2),#stage.m .items h3{display:none}
+#stage.m .basket{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,36px)}
+#stage.m .slot{width:auto}
+#stage.m .jobbar{height:28px}
+#stage.m .keys{grid-template-columns:150px minmax(0,1fr);height:178px}
+#stage.m .tenkey{grid-template-columns:repeat(3,46px);grid-template-rows:repeat(4,40px)}
+#stage.m .fkeys{grid-template-rows:repeat(4,40px)}
+#stage.m .fkeys .key{justify-content:center;padding:0 2px;font-size:11.5px}
+#stage.m .fkeys kbd{display:none}
+#stage.m .main>.panel:nth-child(3){padding:8px}
+#stage.m .shelf{grid-template-columns:repeat(3,minmax(0,1fr))}
+#stage.m .sh{height:56px}
+#stage.m .note2{display:none}
+#stage.m .bagk{margin-top:8px}
+#stage.m .tabbar{display:grid;grid-template-columns:1fr 1fr;gap:8px;height:40px}
+#stage.m .tabbar .key{height:40px;justify-content:center;font-size:14px}
+#stage.m .title{display:flex;flex-direction:column;gap:8px;padding:14px}
+#stage.m .tl{grid-template-rows:56px 36px 100px 156px 44px;gap:8px}
+#stage.m .logo{font-size:44px;line-height:56px}
+#stage.m .tag{font-size:12px;line-height:17px}
+#stage.m .tl svg{width:200px;height:100px}
+#stage.m .menu{grid-template-rows:52px 44px 44px;gap:8px}
+#stage.m .menu .key{font-size:14px}
+#stage.m .chip{padding:0 8px;gap:3px}
+#stage.m .chip b{font-size:13px}
+#stage.m .news{height:240px}
+#stage.m .mbox{width:364px;height:640px;padding:14px;gap:8px;grid-template-rows:26px minmax(0,1fr) 42px}
+#stage.m .mt{font-size:17px}
+#stage.m .set{grid-template-columns:92px minmax(0,1fr) 46px;gap:8px}
+#stage.m .upg{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:none;grid-auto-rows:182px}
+#stage.m .up{grid-template-rows:20px 62px 16px 36px;font-size:11px}
+#stage.m .res{grid-template-columns:minmax(0,1fr);grid-template-rows:150px auto;gap:10px}
+#stage.m .mfoot .key{min-width:0;flex:1}
+#stage.m .mfoot .sp{display:none}
+@media (prefers-reduced-motion:reduce){.key:active:not(:disabled){transform:none}}
+</style>
+<style>html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}</style>
+</head>
+<body>
+<div class="wrap"><div id="holder"><div id="stage" class="pc"></div></div></div>
+<script>
+(function(){
+'use strict';
+const $=s=>document.querySelector(s);
+const stage=$('#stage'),holder=$('#holder');
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const ri=(a,b)=>Math.floor(rnd(a,b+1));
+const yen=n=>'¥'+Math.round(n).toLocaleString('ja-JP');
+const DAY=180,OPEN=10,CLOSE=20,SHELF_MAX=8,BAG_MAX=24;
+const ITEMS=[
+ {id:'milk',name:'牛乳',price:198,w:3},{id:'yogurt',name:'ヨーグルト',price:148,w:3},
+ {id:'tofu',name:'豆腐',price:98,w:3},{id:'ice',name:'アイス',price:158,w:2},
+ {id:'rice',name:'お米5kg',price:2480,w:1},{id:'water',name:'お水2L',price:128,w:3},
+ {id:'soap',name:'洗剤',price:398,w:2},{id:'egg',name:'たまご',price:268,w:3},
+ {id:'jam',name:'ジャム(瓶)',price:358,w:2},{id:'bread',name:'食パン',price:178,w:3},
+ {id:'snack',name:'おかし',price:120,w:3},{id:'banana',name:'バナナ',price:188,w:3},
+ {id:'tissue',name:'ティッシュ',price:298,w:2},{id:'battery',name:'電池',price:498,w:2},
+ {id:'note',name:'ノート',price:158,w:2}
+];
+const UPG={
+ scan:{name:'ぜんぶ読み取り機',desc:'「スキャン」キーでカゴの商品をまとめて読み取れる。',max:1,cost:[3500]},
+ change:{name:'自動釣銭機',desc:'「自動釣銭機」キーで、預りとおつりを自動で処理する(約1.4秒)。',max:1,cost:[4500]},
+ cart:{name:'品出し台車',desc:'品出しと袋の補充が速くなり、1回に運ぶ量も増える。',max:2,cost:[2500,4000]},
+ flag:{name:'のぼり旗',desc:'来店するお客さんが増える。',max:2,cost:[3000,5000]},
+ chair:{name:'待ち椅子',desc:'お客さんが待てる時間が延びる。',max:2,cost:[2500,4000]}
+};
+const NEWS=[
+ {v:'v0.3',d:'2026-11-03',t:[
+  '「出典・権利」を追加しました。完全自作のオリジナルゲームであること、法令や著作権を侵害していないことを記載しています。',
+  'PC用とスマホ用で画面レイアウトを分けました。自動判定のほか、設定から切り替えられます。',
+  'タイトル画面に、完全自作のオリジナルゲームである旨を表記しました。',
+  'レジ表示の不具合を修正しました。']},
+ {v:'v0.2',d:'2026-11-03',t:[
+  '画面サイズを固定し、表示が変わってもUIの大きさが変わらないようにしました。',
+  'タイトル画面とゲーム画面の2画面構成にしました。',
+  '画面の明るさ、BGM音量、SE音量を設定できるようにしました。',
+  'レジ操作を固定のキー配置にし、キーボード操作にも対応しました。',
+  'おつりはレジが自動で表示します。お預かり金額を入力して確認する流れに変えました。',
+  '袋詰めを「袋詰め」キー1つにし、商品ごとの袋分けをなくしました。',
+  'BGMと効果音を、すべてゲーム内で作った音に統一しました。']},
+ {v:'v0.1',d:'2026-11-03',t:['初版を公開しました。']}
+];
+const KEY='regi-tooban-v1';
+let S={day:1,funds:0,best:0,bgm:40,se:70,bright:100,layout:'auto',up:{scan:0,change:0,cart:0,flag:0,chair:0}};
+try{
+  const o=JSON.parse(localStorage.getItem(KEY)||'null');
+  if(o){
+    ['day','funds','best','bgm','se','bright'].forEach(k=>{if(typeof o[k]==='number')S[k]=o[k]});
+    if(o.layout==='pc'||o.layout==='m'||o.layout==='auto')S.layout=o.layout;
+    if(o.up)Object.keys(S.up).forEach(k=>{if(typeof o.up[k]==='number')S.up[k]=o.up[k]});
+  }
+}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+
+let R=null,scene='title',raf=0,last=0,modal=null,quitArmed=false,resetArmed=false,summary=null,mode='pc',tab='reg';
+
+/* ================= audio (すべて合成。外部音源なし) ================= */
+let AC=null,bgmG=null,seG=null,bgmOn=false,bgmNext=0,bgmStep=0;
+function audio(){
+  if(!AC){
+    try{
+      AC=new (window.AudioContext||window.webkitAudioContext)();
+      bgmG=AC.createGain();seG=AC.createGain();
+      bgmG.connect(AC.destination);seG.connect(AC.destination);applyVol();
+    }catch(e){AC=null}
+  }
+  if(AC&&AC.state==='suspended'){try{AC.resume()}catch(e){}}
+  return AC;
+}
+function applyVol(){
+  if(bgmG)bgmG.gain.value=Math.pow(S.bgm/100,2)*0.6;
+  if(seG)seG.gain.value=Math.pow(S.se/100,2);
+}
+function tone(f,t,d,type,v,dest,slide){
+  const o=AC.createOscillator(),g=AC.createGain();
+  o.type=type;o.frequency.setValueAtTime(f,t);
+  if(slide)o.frequency.exponentialRampToValueAtTime(slide,t+d);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(v,t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+  o.connect(g);g.connect(dest);o.start(t);o.stop(t+d+0.03);
+}
+function noise(t,d,v,freq){
+  const n=Math.floor(AC.sampleRate*d),b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);
+  for(let i=0;i<n;i++)a[i]=(Math.random()*2-1)*(1-i/n);
+  const s=AC.createBufferSource();s.buffer=b;
+  const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=freq;
+  const g=AC.createGain();g.gain.value=v;
+  s.connect(f);f.connect(g);g.connect(seG);s.start(t);
+}
+function se(name){
+  if(!audio())return;
+  const t=AC.currentTime;
+  if(name==='scan'){tone(1480,t,0.06,'square',0.22,seG);tone(1976,t+0.05,0.07,'square',0.22,seG)}
+  else if(name==='key'){tone(900,t,0.03,'square',0.14,seG)}
+  else if(name==='ok'){tone(880,t,0.09,'triangle',0.3,seG);tone(1320,t+0.09,0.16,'triangle',0.3,seG)}
+  else if(name==='ng'){tone(190,t,0.26,'sawtooth',0.28,seG,120)}
+  else if(name==='coin'){tone(2093,t,0.08,'sine',0.25,seG);tone(2793,t+0.06,0.2,'sine',0.25,seG)}
+  else if(name==='card'){tone(1000,t,0.05,'square',0.18,seG);tone(1000,t+0.09,0.05,'square',0.18,seG)}
+  else if(name==='bag'){noise(t,0.3,0.7,1800);noise(t+0.12,0.25,0.5,2600)}
+}
+const CH=[[261.63,329.63,392],[220,261.63,329.63],[174.61,220,261.63],[196,246.94,293.66]];
+const BASS=[130.81,110,87.31,98];
+const MEL=[
+ [[659.25,0,783.99,0,659.25,587.33,523.25,0],[659.25,0,587.33,523.25,440,0,523.25,0],[440,0,523.25,0,698.46,0,659.25,523.25],[587.33,659.25,587.33,0,493.88,0,392,0]],
+ [[783.99,0,659.25,783.99,880,0,783.99,0],[880,0,783.99,659.25,587.33,0,659.25,0],[523.25,440,523.25,698.46,659.25,0,523.25,0],[587.33,0,493.88,587.33,783.99,0,0,0]]
+];
+const ARP=[0,1,2,1,0,1,2,1],STEP=60/92/2;
+function bgmPlay(n,t){
+  const sec=Math.floor(n/32)%2,bar=Math.floor(n/8)%4,i=n%8;
+  tone(CH[bar][ARP[i]],t,0.3,'sine',0.11,bgmG);
+  const m=MEL[sec][bar][i];if(m)tone(m,t,0.3,'triangle',0.17,bgmG);
+  if(i===0||i===4)tone(BASS[bar],t,0.55,'sine',0.24,bgmG);
+}
+function startBgm(){
+  if(bgmOn||!audio())return;
+  bgmOn=true;bgmNext=AC.currentTime+0.1;bgmStep=0;
+  setInterval(()=>{
+    if(!AC)return;
+    if(bgmNext<AC.currentTime)bgmNext=AC.currentTime+0.05;
+    while(bgmNext<AC.currentTime+0.4){bgmPlay(bgmStep,bgmNext);bgmNext+=STEP;bgmStep++}
+  },120);
+}
+
+/* ================= helpers ================= */
+function setHTML(el,h){if(el&&el._h!==h){el.innerHTML=h;el._h=h}}
+function say(t,k){
+  if(R){R.msg=t;R.msgKind=k||''}
+  const m=$('#msg');if(m){m.textContent=t;m.setAttribute('data-k',k||'')}
+}
+const mood=c=>{const f=c.patience/c.patienceMax;return f>0.5?'hi':f>0.25?'mid':'lo'};
+const dueNow=c=>c.total-(c.ptsApplied?c.usePts:0);
+const blocked=c=>c.usePts>0&&!c.ptsApplied;
+function rushNow(){const h=OPEN+(R.t/DAY)*(CLOSE-OPEN);return (h>=12&&h<13.5)||(h>=17&&h<19)}
+function clockText(){
+  if(R.t>=DAY)return '閉店';
+  const m=Math.floor((R.t/DAY)*(CLOSE-OPEN)*60)+OPEN*60,h=Math.floor(m/60),mm=m%60;
+  return (h<10?'0':'')+h+':'+(mm<10?'0':'')+mm;
+}
+const CASHU=[[10000,'1万円札'],[5000,'5千円札'],[1000,'千円札'],[500,'500円玉'],[100,'100円玉'],[50,'50円玉'],[10,'10円玉'],[5,'5円玉'],[1,'1円玉']];
+function cashText(n){
+  const out=[];
+  CASHU.forEach(u=>{const k=Math.floor(n/u[0]);if(k>0){out.push(u[1]+(k>1?'×'+k:''));n-=k*u[0]}});
+  return out.join('・');
+}
+function face(c,size){
+  const hair=['#2b2220','#5a3b24','#8a8f98','#1d2b45','#6b2d3a'][c.hair];
+  const st='fill="none" stroke="#17232b" stroke-width="1.8" stroke-linecap="round"';
+  return `<svg class="face" viewBox="0 0 40 40" width="${size}" height="${size}" aria-hidden="true">
+   <circle cx="20" cy="21" r="16" style="fill:hsl(${c.hue} 45% 82%)"/>
+   <path d="M4.5 19 A15.5 15.5 0 0 1 35.5 19 Q20 10 4.5 19Z" style="fill:${hair}"/>
+   <circle cx="14" cy="22.5" r="1.7" fill="#17232b"/><circle cx="26" cy="22.5" r="1.7" fill="#17232b"/>
+   <path class="m-hi" d="M13.5 28.5 Q20 34 26.5 28.5" ${st}/>
+   <path class="m-mid" d="M14 30 H26" ${st}/>
+   <g class="m-lo"><path d="M13.5 31.5 Q20 26 26.5 31.5" ${st}/><path d="M10.5 18.5 L17 20.5 M29.5 18.5 L23 20.5" ${st}/></g></svg>`;
+}
+
+/* ================= customers ================= */
+const CNT=[1,1,2,2,2,3,3,3,4,4,5,6];
+function wpick(){
+  let tot=0;ITEMS.forEach(i=>tot+=i.w);
+  let r=Math.random()*tot;
+  for(const it of ITEMS){r-=it.w;if(r<=0)return it}
+  return ITEMS[0];
+}
+function tenderFor(due){
+  const up=u=>Math.ceil(due/u)*u;
+  let c=[due,up(100),up(500),up(1000),up(1000)];
+  if(due>100)c.push(due+((10-due%10)%10)+50);
+  if(due>1500&&due<=5000)c.push(5000);
+  c=c.filter(x=>x>=due&&x<=5000);
+  return c.length?c[ri(0,c.length-1)]:10000;
+}
+function makeCustomer(){
+  const want=CNT[ri(0,CNT.length-1)],items=[];let missed=0,rice=0;
+  for(let i=0;i<want;i++){
+    let it=wpick();
+    if(it.id==='rice'&&rice)it=ITEMS[9];
+    if(R.shelf[it.id]>0){
+      R.shelf[it.id]--;if(it.id==='rice')rice++;
+      items.push({uid:R.uid++,name:it.name,price:it.price,scanned:false});
+    }else missed++;
+  }
+  if(!items.length)return null;
+  const total=items.reduce((a,x)=>a+x.price,0),hasCard=Math.random()<0.5;
+  const c={id:R.uid++,hue:ri(0,359),hair:ri(0,4),items,missed,total,hasCard,cardRead:false,ptsApplied:false,usePts:0,
+    ownBag:Math.random()<0.35,cash:Math.random()<0.55,payLabel:['クレジットカード','スマホ決済','交通系IC'][ri(0,2)],
+    mistakes:0,buf:'',entered:null,phase:'queue'};
+  c.patienceMax=ri(42,56)+items.length*2+S.up.chair*8;c.patience=c.patienceMax;
+  if(hasCard&&Math.random()<0.35){
+    const opt=[50,100,200,300].filter(p=>p<=total*0.4);
+    if(opt.length)c.usePts=opt[ri(0,opt.length-1)];
+  }
+  const due=total-c.usePts;
+  c.tender=c.cash?tenderFor(due):due;
+  return c;
+}
+function interval(){
+  let base=rnd(9,15);
+  if(rushNow())base*=0.55;
+  base*=Math.max(0.7,1-0.02*(S.day-1));
+  return base/(1+0.15*S.up.flag);
+}
+function arrive(){
+  if(R.queue.length>=5){R.turned++;R.lost++;say('行列が長すぎて、帰ってしまったお客さんがいます。','bad');return}
+  const c=makeCustomer();
+  if(!c){R.stockout++;R.lost++;R.rated++;R.starSum+=1;say('品切れで、何も買わずに帰ったお客さんがいます。棚を確認しましょう。','bad');se('ng');return}
+  R.queue.push(c);
+}
+function angryLeave(c){
+  R.angry++;R.lost++;R.rated++;R.starSum+=1;
+  if(R.cur===c){R.cur=null;if(R.job&&R.job.cust===c)R.job=null}
+  say('お客さんが待ちきれず帰ってしまいました…','bad');se('ng');
+}
+function toPay(c){
+  c.phase='pay';
+  if(blocked(c))say('ポイント利用を処理してください。(ポイントカード → ポイント利用)','bad');
+  else say('読み取り完了。お会計です。','');
+}
+function complete(c){
+  const f=c.patience/c.patienceMax;
+  let s=f>=0.6?5:f>=0.4?4:f>=0.22?3:f>=0.08?2:1;
+  s-=c.mistakes;if(c.missed)s-=1;if(s<1)s=1;
+  const amt=dueNow(c);
+  R.sales+=amt;R.served++;R.rated++;R.starSum+=s;R.cur=null;
+  say('ありがとうございました。 '+'★'.repeat(s)+'☆'.repeat(5-s)+'  '+yen(amt),'good');se('ok');
+}
+function paid(c){
+  if(c.hasCard&&!c.cardRead){c.mistakes++;R.mistakes++;se('ng')}
+  if(c.cash)se('coin');
+  if(c.ownBag){c.phase='done';complete(c)}
+  else{c.phase='bag';say('お会計が済みました。「袋詰め」をお願いします。','')}
+  updatePlay();
+}
+function job(label,dur,fn,cust){
+  R.job={label,dur,start:R.t,at:R.t+dur,fn,cust:cust||null};
+  updatePlay();
+}
+
+/* ================= predicates ================= */
+const okp=()=>scene==='play'&&R&&!R.paused&&!R.over&&!modal;
+const canScan=()=>okp()&&R.cur&&R.cur.phase==='scan'&&!R.job;
+const canCard=()=>okp()&&R.cur&&(R.cur.phase==='scan'||R.cur.phase==='pay')&&R.cur.hasCard&&!R.cur.cardRead&&!R.job;
+const canPts=()=>okp()&&R.cur&&(R.cur.phase==='scan'||R.cur.phase==='pay')&&R.cur.usePts>0&&!R.cur.ptsApplied&&!R.job;
+const canTen=()=>okp()&&R.cur&&R.cur.phase==='pay'&&R.cur.cash&&R.cur.entered===null&&!blocked(R.cur)&&!R.job;
+const canClr=()=>okp()&&R.cur&&R.cur.phase==='pay'&&R.cur.cash&&!R.job&&!blocked(R.cur);
+const canGive=()=>okp()&&R.cur&&R.cur.phase==='pay'&&R.cur.cash&&R.cur.entered!==null&&!R.job;
+const canCl=()=>okp()&&R.cur&&R.cur.phase==='pay'&&!R.cur.cash&&!blocked(R.cur)&&!R.job;
+const canBag=()=>okp()&&R.cur&&R.cur.phase==='bag'&&!R.job;
+const canAuto=()=>S.up.change>0&&canTen();
+
+/* ================= actions ================= */
+function doScan(c,it){it.scanned=true;se('scan');if(c.items.every(i=>i.scanned))toPay(c)}
+const ACT={
+  scan(){
+    if(!canScan())return;
+    const c=R.cur,rest=c.items.filter(i=>!i.scanned);if(!rest.length)return;
+    if(S.up.scan&&rest.length>1){
+      job('まとめて読み取り中…',0.2*rest.length+0.2,()=>{if(R.cur!==c)return;rest.forEach(i=>i.scanned=true);se('scan');toPay(c)},c);
+    }else{doScan(c,rest[0]);updatePlay()}
+  },
+  item(uid){
+    if(!canScan())return;
+    const c=R.cur,it=c.items.find(i=>i.uid===+uid);if(!it||it.scanned)return;
+    doScan(c,it);updatePlay();
+  },
+  card(){if(!canCard())return;R.cur.cardRead=true;se('card');say('ポイントカードを読み取りました。','');updatePlay()},
+  pts(){
+    if(!canPts())return;const c=R.cur;
+    if(!c.cardRead){say('先にポイントカードを読み取ってください。','bad');se('ng');return}
+    c.ptsApplied=true;se('card');say('ポイント '+yen(c.usePts)+' を利用しました。','');
+    updatePlay();
+  },
+  digit(d){
+    if(!canTen())return;const c=R.cur;
+    if(d==='00'&&!c.buf)return;
+    if((c.buf+d).length>6)return;
+    c.buf+=d;se('key');updatePlay();
+  },
+  clr(){if(!canClr())return;R.cur.buf='';R.cur.entered=null;se('key');updatePlay()},
+  azu(){
+    if(!canTen())return;const c=R.cur,v=+c.buf||0;
+    if(v<=0){say('お預かり金額をテンキーで入力してください。','bad');se('ng');return}
+    c.entered=v;se('key');say('お預かり '+yen(v)+'。おつりを確認して「おつり渡し」を押してください。','');updatePlay();
+  },
+  give(){
+    if(!canGive())return;const c=R.cur;
+    if(c.entered===c.tender){paid(c)}
+    else{
+      c.mistakes++;R.mistakes++;c.patience-=5;c.buf='';c.entered=null;se('ng');
+      say('お預かり額の入力が違っていました。(実際は '+yen(c.tender)+')もう一度入力してください。','bad');updatePlay();
+    }
+  },
+  cl(){
+    if(!canCl())return;const c=R.cur;
+    job('決済端末 読み取り中…',0.9,()=>{
+      if(R.cur!==c)return;
+      if(Math.random()<0.12){say('読み取りエラー。もう一度「キャッシュレス」を押してください。','bad');se('ng')}
+      else{se('card');paid(c)}
+    },c);
+  },
+  auto(){
+    if(!canAuto())return;const c=R.cur;
+    c.entered=c.tender;
+    job('自動釣銭機 作動中…',1.4,()=>{if(R.cur===c)paid(c)},c);
+  },
+  bag(){
+    if(!canBag())return;const c=R.cur,need=c.items.length>5?2:1;
+    if(R.bags<need){say('袋が足りません。棚の「袋を補充」を押してください。','bad');se('ng');return}
+    job('袋詰め中…',0.3*c.items.length+0.3,()=>{if(R.cur!==c)return;R.bags-=need;se('bag');complete(c)},c);
+  },
+  restock(id){
+    if(!okp()||R.job||R.shelf[id]>=SHELF_MAX)return;
+    const lv=S.up.cart,dur=[1.6,1.1,0.7][lv],add=[4,5,6][lv],it=ITEMS.find(x=>x.id===id);
+    job(it.name+'を品出し中…',dur,()=>{R.shelf[id]=Math.min(SHELF_MAX,R.shelf[id]+add);se('key');say(it.name+'を補充しました。','')});
+  },
+  bags(){
+    if(!okp()||R.job||R.bags>=BAG_MAX)return;
+    job('袋を補充中…',[1.4,1.0,0.7][S.up.cart],()=>{R.bags=Math.min(BAG_MAX,R.bags+8);se('key');say('袋を補充しました。','')});
+  },
+  tab(v){tab=v==='shelf'?'shelf':'reg';applyTab();if(R)updatePlay()},
+  layout(v){S.layout=v;save();applyLayout(true)},
+  /* screens / modals */
+  start(){startDay()},
+  shop(){openModal('shop')},
+  howto(){openModal('howto')},
+  settings(){openModal('settings')},
+  credits(){openModal('credits')},
+  pause(){openModal('pause')},
+  closem(){closeModal()},
+  buy(k){
+    const u=UPG[k],lv=S.up[k];if(!u||lv>=u.max)return;
+    const cost=u.cost[lv];if(S.funds<cost)return;
+    S.funds-=cost;S.up[k]=lv+1;save();se('ok');renderModal();
+  },
+  quit(){
+    if(!quitArmed){quitArmed=true;renderModal();return}
+    quitArmed=false;showTitle();
+  },
+  next(){S.day++;save();showTitle()},
+  reset(){
+    if(!resetArmed){resetArmed=true;renderModal();return}
+    S={day:1,funds:0,best:0,bgm:S.bgm,se:S.se,bright:S.bright,layout:S.layout,up:{scan:0,change:0,cart:0,flag:0,chair:0}};
+    save();showTitle();
+  }
+};
+
+/* ================= game flow ================= */
+function startDay(){
+  const shelf={};ITEMS.forEach(it=>shelf[it.id]=5);
+  R={t:0,shelf,bags:14,queue:[],cur:null,job:null,sales:0,served:0,lost:0,angry:0,turned:0,stockout:0,
+     mistakes:0,starSum:0,rated:0,nextArrive:1.5,uid:1,overT:0,closedSaid:false,paused:false,over:false,
+     msg:'営業開始です。いらっしゃいませ。',msgKind:''};
+  scene='play';modal=null;quitArmed=false;resetArmed=false;tab='reg';
+  buildGame();updatePlay();say(R.msg,'');
+  cancelAnimationFrame(raf);last=performance.now();raf=requestAnimationFrame(loop);
+}
+function loop(ts){
+  if(scene!=='play'||!R)return;
+  const dt=Math.min(0.1,(ts-last)/1000);last=ts;
+  step(dt);
+  if(scene==='play')tickUI();
+  raf=requestAnimationFrame(loop);
+}
+function step(dt){
+  if(R.paused||R.over)return;
+  R.t+=dt;
+  let changed=false;const closed=R.t>=DAY;
+  if(closed&&!R.closedSaid){R.closedSaid=true;say('閉店時間です。残りのお客さんを対応しましょう。','');changed=true}
+  if(!closed){R.nextArrive-=dt;if(R.nextArrive<=0){arrive();R.nextArrive=interval();changed=true}}
+  if(R.cur){R.cur.patience-=dt*0.6;if(R.cur.patience<=0){angryLeave(R.cur);changed=true}}
+  for(let i=R.queue.length-1;i>=0;i--){
+    const c=R.queue[i];c.patience-=dt;
+    if(c.patience<=0){R.queue.splice(i,1);angryLeave(c);changed=true}
+  }
+  if(R.job&&R.t>=R.job.at){const j=R.job;R.job=null;j.fn();changed=true}
+  if(!R.cur&&R.queue.length&&!R.job){
+    R.cur=R.queue.shift();R.cur.phase='scan';say('いらっしゃいませ。','');changed=true;
+  }
+  if(closed){
+    R.overT+=dt;
+    if(R.overT>40){
+      if(R.cur)angryLeave(R.cur);
+      while(R.queue.length)angryLeave(R.queue.shift());
+      changed=true;
+    }
+    if(!R.cur&&!R.queue.length&&!R.job){finishDay();return}
+  }
+  if(changed)updatePlay();
+}
+function finishDay(){
+  const avg=R.rated?R.starSum/R.rated:0,earn=Math.round(R.sales*0.3+R.starSum*30);
+  const rank=avg>=4.5?'S':avg>=3.8?'A':avg>=3?'B':'C',newBest=R.sales>S.best;
+  S.funds+=earn;if(newBest)S.best=R.sales;save();
+  summary={day:S.day,sales:R.sales,served:R.served,lost:R.lost,angry:R.angry,stockout:R.stockout,turned:R.turned,mistakes:R.mistakes,avg,earn,rank,newBest};
+  R.over=true;openModal('result');
+}
+
+/* ================= game screen ================= */
+function buildGame(){
+  const tk=['7','8','9','4','5','6','1','2','3','0','00','C'];
+  const fk=(id,act,label,key)=>`<button class="key" id="${id}" data-act="${act}"><span>${label}</span><kbd>${key}</kbd></button>`;
+  stage.innerHTML=`<div class="scr game">
+   <div class="topbar" id="g-top"></div>
+   <div class="msg" id="msg" data-k=""></div>
+   <div class="main">
+    <section class="panel"><h2>行列 <small id="qcount"></small></h2><div class="qlist" id="qlist"></div>
+     <div class="legend"><div><kbd>Space</kbd>スキャン</div><div><kbd>P</kbd>ポイントカード</div><div><kbd>U</kbd>ポイント利用</div><div><kbd>0-9</kbd>テンキー</div><div><kbd>Enter</kbd>決定</div><div><kbd>G</kbd>おつり渡し</div><div><kbd>B</kbd>袋詰め</div><div><kbd>Esc</kbd>一時停止</div></div></section>
+    <section class="panel reg">
+     <div class="cr" id="cr"><div class="facebox" id="facebox"></div><div class="bw"><div class="bub1" id="bub1"></div><div class="bub2" id="bub2"></div><div class="pat"><i class="fill"></i></div></div></div>
+     <div class="lcd">
+      <div><span>小計</span><b id="l-sub"></b></div>
+      <div id="r-pts"><span>ポイント利用</span><b id="l-pts"></b></div>
+      <div class="due"><span>お支払い</span><b id="l-due"></b></div>
+      <div><span>お預かり</span><b id="l-in"></b></div>
+      <div class="chg"><span>おつり</span><b id="l-chg"></b></div>
+     </div>
+     <div class="items"><div><h3>カゴ(タップで読み取り)</h3><div class="basket" id="basket"></div></div><div><h3>レシート</h3><div class="rcp" id="rcp"></div></div></div>
+     <div class="jobbar"><span id="jobtxt"></span><div class="pat"><i class="fill" id="jobfill"></i></div></div>
+     <div class="keys">
+      <div class="tenkey">${tk.map(d=>`<button class="key tk" id="tk${d}" data-act="${d==='C'?'clr':'digit:'+d}">${d}</button>`).join('')}</div>
+      <div class="fkeys">
+       ${fk('k-scan','scan','スキャン','Space')}${fk('k-card','card','ポイントカード','P')}
+       ${fk('k-pts','pts','ポイント利用','U')}${fk('k-azu','azu','預り','Enter')}
+       ${fk('k-give','give','おつり渡し','G')}${fk('k-cl','cl','キャッシュレス','K')}
+       ${fk('k-bag','bag','袋詰め','B')}${fk('k-auto','auto','自動釣銭機','A')}
+      </div>
+     </div>
+    </section>
+    <section class="panel"><h2>棚 <small>タップで品出し</small></h2><div class="shelf" id="shelf"></div>
+     <button class="key bagk" id="bagk" data-act="bags"></button>
+     <p class="note2">品出しや補充の間はレジを操作できません。お客さんの待ち時間と相談しましょう。</p></section>
+   </div>
+   <div class="tabbar"><button class="key c" id="tab-reg" data-act="tab:reg">レジ</button><button class="key c" id="tab-shelf" data-act="tab:shelf"></button></div>
+   <div id="modal"></div></div>`;
+  applyTab();
+}
+function applyTab(){
+  stage.classList.toggle('tab-shelf',tab==='shelf');
+  const a=$('#tab-reg'),b=$('#tab-shelf');
+  if(a)a.classList.toggle('on',tab==='reg');
+  if(b)b.classList.toggle('on',tab==='shelf');
+}
+function bubble(c){
+  if(c.phase==='scan'){
+    let t='お願いします。';
+    if(c.hasCard&&!c.cardRead)t+=' ポイントカードあります。';
+    if(c.usePts&&!c.ptsApplied)t+=' ポイント'+c.usePts+'円使います。';
+    if(c.missed)t+=' (品切れだった…)';
+    return t;
+  }
+  if(c.phase==='pay')return c.cash?'現金で払います。':c.payLabel+'で払います。';
+  if(c.phase==='bag')return '袋に入れてください。';
+  return '';
+}
+function updatePlay(){
+  if(scene!=='play'||!R||!$('#g-top'))return;
+  updTop();updQueue();updReg();updShelves();
+  const m=$('#msg');if(m&&m.textContent!==R.msg){m.textContent=R.msg;m.setAttribute('data-k',R.msgKind)}
+  tickUI();
+}
+function updTop(){
+  setHTML($('#g-top'),`<div class="stat w120"><span>時刻</span><b class="mono" id="clock">${clockText()}</b></div>
+   <span class="rush" style="visibility:${rushNow()&&R.t<DAY?'visible':'hidden'}">混雑タイム</span>
+   <div class="stat w170"><span>売上</span><b class="mono">${yen(R.sales)}</b></div>
+   <div class="stat w110"><span>接客</span><b class="mono">${R.served}</b></div>
+   <div class="stat w110"><span>ミス</span><b class="mono">${R.mistakes}</b></div>
+   <span class="sp"></span><button class="key tb" data-act="pause"><span>一時停止</span><kbd>Esc</kbd></button>`);
+}
+function updQueue(){
+  $('#qcount').textContent=R.queue.length+'/5';
+  let h='';
+  for(let i=0;i<5;i++){
+    const c=R.queue[i];
+    h+=c?`<div class="qs" data-cid="${c.id}" data-lv="${mood(c)}">${face(c,36)}<div class="qi"><span>${c.items.length}点${c.hasCard?'・カード':''}</span><div class="pat"><i class="fill" style="width:${Math.max(0,c.patience/c.patienceMax*100)}%"></i></div></div></div>`
+          :'<div class="qs empty">空き</div>';
+  }
+  setHTML($('#qlist'),h);
+}
+function updReg(){
+  const c=R.cur,cr=$('#cr');
+  if(c){cr.setAttribute('data-cid',c.id);cr.setAttribute('data-lv',mood(c))}
+  else{cr.removeAttribute('data-cid');cr.setAttribute('data-lv','hi');cr.querySelector('.fill').style.width='0'}
+  setHTML($('#facebox'),c?face(c,56):'<div class="noface">レジ</div>');
+  $('#bub1').textContent=c?bubble(c):(R.t>=DAY?'閉店後の片付け中です。':'お客さんを待っています。いまが品出しのチャンスです。');
+  $('#bub2').textContent=(c&&c.cash&&c.phase==='pay')?'トレーの現金:'+cashText(c.tender):'';
+  let sub='------',pts='------',due='------',inn='------',chg='------',warn=false;
+  if(c){
+    const scanned=c.items.filter(i=>i.scanned).reduce((a,i)=>a+i.price,0);
+    if(c.usePts){if(c.ptsApplied)pts='-'+yen(c.usePts);else{pts='未処理';warn=true}}
+    if(c.phase==='scan'){sub=yen(scanned);due=yen(scanned)}
+    else{
+      sub=yen(c.total);due=yen(dueNow(c));
+      if(c.cash){
+        if(c.entered!==null){inn=yen(c.entered);chg=c.entered>=dueNow(c)?yen(c.entered-dueNow(c)):'不足'}
+        else if(c.buf)inn=yen(+c.buf)+'_';
+      }
+    }
+  }
+  $('#l-sub').textContent=sub;$('#l-pts').textContent=pts;$('#l-due').textContent=due;
+  $('#l-in').textContent=inn;$('#l-chg').textContent=chg;
+  $('#r-pts').className=warn?'warn':'';
+  let bh='';
+  for(let i=0;i<6;i++){
+    const it=c&&c.items[i];
+    bh+=(it&&!it.scanned)?`<button class="key slot" data-act="item:${it.uid}"${canScan()?'':' disabled'}>${it.name}</button>`:'<div class="slot empty"></div>';
+  }
+  setHTML($('#basket'),bh);
+  setHTML($('#rcp'),c?c.items.filter(i=>i.scanned).map(i=>`<div><span>${i.name}</span><span>${yen(i.price)}</span></div>`).join(''):'');
+  $('#jobtxt').textContent=R.job?R.job.label:'待機中';
+  if(!R.job)$('#jobfill').style.width='0';
+  const dis=(id,v)=>{const e=$(id);if(e)e.disabled=!v};
+  dis('#k-scan',canScan());dis('#k-card',canCard());dis('#k-pts',canPts());dis('#k-azu',canTen());
+  dis('#k-give',canGive());dis('#k-cl',canCl());dis('#k-bag',canBag());dis('#k-auto',canAuto());
+  ['0','1','2','3','4','5','6','7','8','9','00'].forEach(d=>dis('#tk'+d,canTen()));
+  dis('#tkC',canClr());
+}
+function updShelves(){
+  let h='',low=0;
+  ITEMS.forEach(it=>{
+    const n=R.shelf[it.id];if(n<=1)low++;
+    h+=`<button class="key sh${n<=1?' low':''}" data-act="restock:${it.id}"${(R.job||n>=SHELF_MAX)?' disabled':''}><span class="t"><span>${it.name}</span><b>${n}/${SHELF_MAX}</b></span><span class="pat"><i class="fill" style="width:${n/SHELF_MAX*100}%"></i></span></button>`;
+  });
+  setHTML($('#shelf'),h);
+  const bk=$('#bagk');
+  setHTML(bk,`<span>袋を補充</span><b class="mono">${R.bags}/${BAG_MAX}</b>`);
+  bk.disabled=!!R.job||R.bags>=BAG_MAX;
+  setHTML($('#tab-shelf'),'棚・品出し'+(low?`<b class="badge">${low}</b>`:''));
+}
+function tickUI(){
+  const ck=$('#clock');if(ck&&R)ck.textContent=clockText();
+  document.querySelectorAll('[data-cid]').forEach(el=>{
+    const id=+el.getAttribute('data-cid');
+    const c=(R.cur&&R.cur.id===id)?R.cur:R.queue.find(x=>x.id===id);
+    if(!c)return;
+    el.setAttribute('data-lv',mood(c));
+    const fl=el.querySelector('.fill');if(fl)fl.style.width=Math.max(0,c.patience/c.patienceMax*100)+'%';
+  });
+  const jf=$('#jobfill');
+  if(jf&&R&&R.job)jf.style.width=Math.min(100,(R.t-R.job.start)/R.job.dur*100)+'%';
+}
+
+/* ================= title / modals ================= */
+function showTitle(){
+  scene='title';R=null;modal=null;quitArmed=false;resetArmed=false;
+  drawTitle();
+}
+function drawTitle(){
+  const news=NEWS.map(n=>`<div class="nv"><h4>${n.v}<small>${n.d}</small></h4><ul>${n.t.map(x=>`<li>${x}</li>`).join('')}</ul></div>`).join('');
+  stage.innerHTML=`<div class="scr title">
+   <div class="tl">
+    <div class="logo">レジ当番</div>
+    <p class="tag">架空の小さな商店で、ひとりでレジを回す一日。<br>すべて完全自作のオリジナルゲームです。</p>
+    <svg viewBox="0 0 300 150" width="300" height="150" aria-hidden="true">
+     <rect x="14" y="78" width="272" height="60" rx="9" fill="#2f4d59"/>
+     <rect x="14" y="132" width="272" height="8" rx="3" fill="#1f3640"/>
+     <rect x="34" y="14" width="124" height="62" rx="7" fill="#12302a" stroke="#0a1f1b" stroke-width="4"/>
+     <text x="148" y="58" text-anchor="end" font-size="26" font-weight="700" fill="#aaf2cb" font-family="ui-monospace,Consolas,monospace">¥1,280</text>
+     <text x="46" y="32" font-size="9" fill="#5b9a82">お支払い</text>
+     ${[0,1,2].map(r=>[0,1,2,3].map(c=>`<rect x="${176+c*26}" y="${22+r*18}" width="21" height="13" rx="3" fill="#eef2f4"/>`).join('')).join('')}
+     <rect x="44" y="92" width="96" height="32" rx="5" fill="#3c6070"/>
+     <rect x="156" y="92" width="110" height="32" rx="5" fill="#3c6070"/>
+    </svg>
+    <div class="menu">
+     <button class="key primary start" data-act="start">営業開始</button>
+     <button class="key" data-act="shop">お店の設備</button><button class="key" data-act="howto">あそびかた</button>
+     <button class="key" data-act="settings">設定</button><button class="key" data-act="credits">出典・権利</button>
+    </div>
+    <div class="chips"><div class="chip"><span>営業</span><b class="mono">${S.day}日目</b></div><div class="chip"><span>資金</span><b class="mono">${yen(S.funds)}</b></div><div class="chip"><span>最高売上</span><b class="mono">${yen(S.best)}</b></div></div>
+   </div>
+   <section class="panel news"><h2>アップデート情報</h2><div class="newslist">${news}</div></section>
+   <div id="modal"></div></div>`;
+}
+function openModal(m){
+  modal=m;quitArmed=false;resetArmed=false;
+  if(scene==='play'&&R&&m!=='result')R.paused=true;
+  renderModal();
+}
+function closeModal(){
+  modal=null;quitArmed=false;resetArmed=false;
+  if(scene==='play'&&R&&!R.over){R.paused=false;last=performance.now()}
+  renderModal();if(scene==='play')updatePlay();
+}
+function settingsBody(withReset){
+  const row=(k,l,min,max)=>`<div class="set"><label for="r-${k}">${l}</label><input type="range" id="r-${k}" min="${min}" max="${max}" value="${S[k]}" data-range="${k}"><output id="v-${k}">${S[k]}%</output></div>`;
+  const seg=(v,l)=>`<button class="key${S.layout===v?' on':''}" data-act="layout:${v}">${l}</button>`;
+  let h=row('bright','画面の明るさ',40,120)+row('bgm','BGM音量',0,100)+row('se','SE音量',0,100)+
+   `<div class="set"><label>画面の表示</label><div class="seg">${seg('auto','自動')}${seg('pc','PC用')}${seg('m','スマホ用')}</div></div>`;
+  if(withReset)h+=`<div class="set"><label>セーブデータ</label><button class="key wide${resetArmed?' warn':''}" data-act="reset">${resetArmed?'本当に消す(もう一度押す)':'データを消す'}</button></div>`;
+  return h+'<p class="sub" style="margin-top:10px">音はすべてゲーム内で作っています。ブラウザの仕様で、最初にクリック(タップ)するまで音は鳴りません。</p>';
+}
+function creditsBody(){
+  return `<div class="cred">
+   <div><h4>このゲームについて</h4><ul>
+    <li>「レジ当番」は、すべて完全自作のオリジナルゲームです。</li>
+    <li>プログラム、画面デザイン、お客さんのキャラクター、BGM、効果音は、このゲームのために新しく作ったものです。</li>
+    <li>BGMと効果音は、ブラウザ上でその場で音を合成して鳴らしています。録音した音源や既存の曲・効果音は使っていません。</li>
+    <li>画像ファイル、外部の素材、外部の文字フォント、外部のプログラムは使っていません。文字は、お使いの端末に入っている標準のフォントで表示されます。</li>
+    <li>店・商品・お客さん・決済の名称はすべて架空です。実在の店、商品、サービスとは関係ありません。</li></ul></div>
+   <div><h4>出典・権利について</h4><ul>
+    <li>出典:なし。引用・転載・参考にした既存の作品や素材はありません。</li>
+    <li>法令に反する内容や、他者の著作権・商標などの権利を侵害する内容は含んでいません。</li>
+    <li>金額や場面は、ゲームのための架空の設定です。</li></ul></div>
+   <div><h4>制作</h4><ul>
+    <li>企画・仕様の決定:依頼者</li>
+    <li>プログラム・デザイン・音の制作:依頼者の指示のもと、AI の Claude(Anthropic)が制作</li>
+    <li>バージョン:${NEWS[0].v}(${NEWS[0].d})</li></ul></div></div>`;
+}
+function renderModal(){
+  const el=$('#modal');if(!el)return;
+  if(!modal){el.innerHTML='';return}
+  let t='',b='',f='';
+  const close='<span class="sp"></span><button class="key primary" data-act="closem">閉じる</button>';
+  if(modal==='pause'){
+    t='一時停止';b=settingsBody(false);
+    f=`<button class="key${quitArmed?' warn':''}" data-act="quit">${quitArmed?'本当に中断(もう一度)':'タイトルへ(今日は中断)'}</button><span class="sp"></span><button class="key primary" data-act="closem">再開</button>`;
+  }else if(modal==='settings'){
+    t='設定';b=settingsBody(true);f='<button class="key" data-act="credits">出典・権利</button>'+close;
+  }else if(modal==='credits'){
+    t='出典・権利について';b=creditsBody();f=close;
+  }else if(modal==='howto'){
+    t='あそびかた';
+    b=`<ol class="howto">
+     <li>お客さんが来たら、カゴの商品をタップするか「スキャン」キー(PCはSpace)で読み取ります。</li>
+     <li>ポイントカードを出されたら「ポイントカード」、ポイントを使うと言われたら「ポイント利用」を押します。</li>
+     <li>現金は、トレーの現金を見てお預かり額をテンキーで入力し「預り」を押します。レジが表示したおつりを確認して「おつり渡し」。入力を間違えるとミスになります。</li>
+     <li>キャッシュレスは「キャッシュレス」キー。たまに読み取りエラーが出ます。</li>
+     <li>袋が必要なお客さんには「袋詰め」を押します。袋は棚の下で補充できます。</li>
+     <li>手が空いたら棚をタップして品出し。品切れや待たせすぎは評価が下がります。(スマホは下のタブで「レジ」と「棚」を切り替えます)</li>
+     <li>1日が終わると利益が入り、お店の設備を整えられます。</li></ol>`;
+    f=close;
+  }else if(modal==='shop'){
+    t='お店の設備 <small class="sub">資金 '+yen(S.funds)+'</small>';
+    b='<div class="upg">'+Object.keys(UPG).map(k=>{
+      const u=UPG[k],lv=S.up[k],maxed=lv>=u.max,cost=maxed?0:u.cost[lv];
+      return `<div class="up"><b>${u.name}</b><p>${u.desc}</p><span class="mono">Lv ${lv} / ${u.max}</span>${maxed?'<button class="key c" disabled>導入済み</button>':`<button class="key c" data-act="buy:${k}"${S.funds<cost?' disabled':''}>導入 ${yen(cost)}</button>`}</div>`;
+    }).join('')+'</div>';
+    f=close;
+  }else if(modal==='result'){
+    const s=summary;
+    t=s.day+'日目 おつかれさま';
+    b=`<div class="res"><div class="rankbox"><span class="sub">本日の評価</span><span class="rank">${s.rank}</span><span class="mono">平均 ★${s.avg.toFixed(1)}</span>${s.newBest?'<span class="rush">最高売上更新</span>':''}</div>
+     <table class="rt"><tr><td>売上</td><td class="mono">${yen(s.sales)}</td></tr>
+     <tr><td>接客したお客さん</td><td class="mono">${s.served}人</td></tr>
+     <tr><td>逃したお客さん</td><td class="mono">${s.lost}人</td></tr>
+     <tr><td class="sub">内訳:待ちきれず帰った / 品切れ / 行列で断念</td><td class="mono sub">${s.angry} / ${s.stockout} / ${s.turned}</td></tr>
+     <tr><td>ミス</td><td class="mono">${s.mistakes}回</td></tr>
+     <tr><td>今日の利益(資金に追加)</td><td class="mono">+${yen(s.earn)}</td></tr></table></div>`;
+    f='<span class="sp"></span><button class="key primary" data-act="next">タイトルへ戻る</button>';
+  }
+  el.innerHTML=`<div class="modal"><div class="mbox"><h2 class="mt">${t}</h2><div class="mbody">${b}</div><div class="mfoot">${f}</div></div></div>`;
+}
+
+/* ================= input ================= */
+stage.addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]');if(!b||b.disabled)return;
+  audio();startBgm();
+  const p=b.getAttribute('data-act').split(':'),f=ACT[p[0]];
+  if(f)f(p[1]);
+});
+stage.addEventListener('mousedown',e=>{if(e.target.closest('button'))e.preventDefault()});
+stage.addEventListener('input',e=>{
+  const t=e.target;if(!t.matches||!t.matches('[data-range]'))return;
+  const k=t.getAttribute('data-range');S[k]=+t.value;
+  const o=$('#v-'+k);if(o)o.textContent=S[k]+'%';
+  if(k==='bright')applyBright();else applyVol();
+});
+stage.addEventListener('change',e=>{
+  const t=e.target;if(!t.matches||!t.matches('[data-range]'))return;
+  save();if(t.getAttribute('data-range')==='se')se('ok');
+});
+document.addEventListener('pointerdown',()=>{audio();startBgm()});
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  const k=e.key;
+  if(k==='Escape'){
+    if(scene==='play'&&R&&!R.over){if(modal==='pause')closeModal();else if(!modal)openModal('pause')}
+    else if(modal&&modal!=='result')closeModal();
+    return;
+  }
+  audio();startBgm();
+  if(!okp())return;
+  if(k===' '){e.preventDefault();ACT.scan();return}
+  if(k==='Enter'){
+    e.preventDefault();
+    if(canTen())ACT.azu();else if(canGive())ACT.give();else if(canCl())ACT.cl();else if(canBag())ACT.bag();else if(canScan())ACT.scan();
+    return;
+  }
+  if(/^[0-9]$/.test(k)){ACT.digit(k);return}
+  if(k==='Backspace'||k==='Delete'||k==='c'||k==='C'){ACT.clr();return}
+  const l=k.toLowerCase();
+  if(l==='p')ACT.card();else if(l==='u')ACT.pts();else if(l==='g')ACT.give();
+  else if(l==='k')ACT.cl();else if(l==='b')ACT.bag();else if(l==='a')ACT.auto();
+});
+document.addEventListener('keyup',e=>{if(e.key===' '&&scene==='play')e.preventDefault()});
+
+/* ================= layout (PC / スマホ) ================= */
+function applyBright(){stage.style.filter='brightness('+(S.bright/100)+')'}
+function curMode(){
+  if(S.layout==='pc')return 'pc';
+  if(S.layout==='m')return 'm';
+  return (window.innerWidth<window.innerHeight||window.innerWidth<640)?'m':'pc';
+}
+function fit(){
+  const W=mode==='m'?380:1000,H=mode==='m'?700:660;
+  const w=document.documentElement.clientWidth-32,h=window.innerHeight-32;
+  let s=Math.min(w/W,h/H,1.6);if(!(s>0.2))s=0.2;
+  stage.style.transform='scale('+s+')';
+  holder.style.width=(W*s)+'px';holder.style.height=(H*s)+'px';
+}
+function applyLayout(force){
+  const m=curMode(),changed=m!==mode;
+  mode=m;
+  stage.classList.toggle('m',m==='m');stage.classList.toggle('pc',m==='pc');
+  fit();
+  if(changed||force){
+    if(scene==='title'){drawTitle();renderModal()}
+    else if(scene==='play'&&R){buildGame();updatePlay();renderModal()}
+  }
+}
+window.addEventListener('resize',()=>applyLayout(false));
+applyBright();
+mode=curMode();
+stage.classList.toggle('m',mode==='m');stage.classList.toggle('pc',mode==='pc');
+fit();showTitle();
+})();
+</script>
+
+</body>
+</html>
